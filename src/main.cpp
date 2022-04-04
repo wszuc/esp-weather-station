@@ -4,6 +4,15 @@
 // Author: Wiktor Szuca
 // wszuc.github.io
 
+/*
+
+TODO:
+
+Strings dont work -> use c strings instead
+Button is pressed initally -> fix
+
+*/
+
 #include <Arduino.h>
 #include <LiquidCrystal_I2C.h>
 #include <ArduinoJson.h>
@@ -11,6 +20,7 @@
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
+#include <ctime>
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 DHTesp dht;
@@ -18,38 +28,50 @@ StaticJsonDocument<128> doc;
 WiFiUDP udp;
 NTPClient ntp(udp, "pool.ntp.org");
 
-time_t downloadedTime = 0, dTime = 0, actualTime = downloadedTime + millis() / 1000 - dTime; // NTP fetched time, time elapsed since first launch, real calculated time
-unsigned short temp, humid;                                                                  // sensor data
+time_t downloadedTime = 0, dTime = 0, actualTime = 0, clickTime = 0, localTime = 0; // NTP fetched time, time elapsed since first launch, real calculated time
+unsigned short temp, humid;                                                         // sensor data
 bool isClicked = 0;
 
-const unsigned int buttonCooldown = 1000;
+const unsigned int buttonCooldown = 1;
 
 const std::string POSTPATH = "";
 
 // Specific functions
 // Formatting LED string
 
-void monoButton()
+void monoButton(time_t actualTime)
 { // monostable button with cooldown
-  Serial.println("Button pressed");
-  isClicked = !isClicked;
+  if (clickTime + buttonCooldown <= actualTime)
+  {
+    isClicked = !isClicked;
+    clickTime = actualTime;
+    Serial.println("Monobutton");
+  }
 }
 
-void printSensorData(String firstLine, String secondLine, bool isWeatherData)
+void printSensorData(String firstLine, String secondLine)
 {
   lcd.clear();
   lcd.print(firstLine);
+  lcd.setCursor(0, 1);
+  lcd.print(secondLine);
+}
+
+void printSensorData(unsigned short firstLine, unsigned short secondLine, bool isWeatherData)
+{
+  lcd.clear();
+  lcd.print("Temp: ");
+  lcd.print(firstLine);
   if (isWeatherData)
   {
-    lcd.print(temp);
     lcd.print(char(223));
     lcd.print("C");
   }
   lcd.setCursor(0, 1);
+  lcd.print("Humid: ");
   lcd.print(secondLine);
   if (isWeatherData)
   {
-    lcd.print(humid);
     lcd.print("%");
   }
 }
@@ -94,13 +116,14 @@ void setup()
   lcd.setCursor(0, 1);
   lcd.print("   ");
   lcd.print(ssid);
-  while (!WiFi.isConnected() && millis() % 1000 <= 5)
+  while (!WiFi.isConnected())
   {
     Serial.println(".");
   }
   Serial.println("\n*******\nConnected, your IP: ");
   Serial.println(WiFi.localIP());
   Serial.println("Fetching time");
+  lcd.clear();
   lcd.print("  Connected :)");
 
   // Setting timezone & fetching time
@@ -110,14 +133,22 @@ void setup()
 
   // ESP sensor initialisation
   dht.setup(0, DHTesp::DHT11);
+
+  // Time elapsed since the start
+  dTime = millis() / 1000;
 }
 
 void loop()
 {
+  actualTime = downloadedTime + millis() / 1000 - dTime;
+  // Local time is 2h ahead of epoch time
+  localTime = actualTime + 7200;
+
   // check state of the button
   if (digitalRead(12) == HIGH)
   {
-    monoButton();
+    Serial.println("Button pressed");
+    monoButton(actualTime);
   }
 
   if (millis() % (dht.getMinimumSamplingPeriod() * 2) <= 10)
@@ -126,17 +157,13 @@ void loop()
     {
       temp = dht.getTemperature();
       humid = dht.getHumidity();
-
-      Serial.println(downloadedTime);
-      Serial.println(dht.getTemperature());
-      Serial.println(dht.getHumidity());
-      printSensorData((String)temp, (String)humid, true);
+      Serial.println(temp);
+      printSensorData(temp, humid, true);
       serialise(temp, humid);
     }
     else
     {
-      printSensorData("Voltage:", (String)(analogRead(A0)), false);
-      Serial.println("Voltage: " + (String)analogRead(A0));
+      printSensorData("Voltage: " + (String)(analogRead(A0) / 204.8) + "V", std::asctime(std::localtime(&localTime)));
     }
   }
 }
